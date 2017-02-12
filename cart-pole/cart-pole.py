@@ -1,32 +1,26 @@
 import gym
 import random
 import math
+import numpy as np
 
 env = gym.make('CartPole-v0')
 
 def multidim(dim, init = lambda: None):
-    if dim == (): return init()
-    return [multidim(dim[1:], init) for _ in range(dim[0])]
+    return np.random.rand(*dim)
 
 def multidex(iterable, index):
-    if len(index) == 1:
-        return iterable[index[0]]
-    return multidex(iterable[index[0]], index[1:])
+    return iterable[index]
 
 def set_multidex(iterable, index, value):
-    if len(index) == 1:
-        iterable[index[0]] = value;
-    else:
-        set_multidex(iterable[index[0]], index[1:], value)
-
+    iterable[index] = value
 
 argmax = lambda pairs: max(pairs, key=lambda x: x[1])[0]
 argmax_index = lambda values: argmax(enumerate(values))
 
 class TabularQLearner:
-    BUCKETS = (50, 100, 50, 100)
-    LIMITS = (4.8, 20, 0.42, 20)
-    ALPHA = 0.15
+    BUCKETS = (50, 200, 50, 200)
+    LIMITS = (4.8, 30, 0.42, 30)
+    ALPHA = 0.3
     DISCOUNT = 0.95
 
     def __init__(self, actions, buckets = BUCKETS):
@@ -47,7 +41,7 @@ class TabularQLearner:
         a_t, s_t = self.last
         prev = multidex(self.Q, self.discretized(s_t) + (a_t,))
         now = multidex(self.Q, self.discretized(observation))
-        update = prev + TabularQLearner.ALPHA * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
+        update = prev + max(TabularQLearner.ALPHA, self.eps) * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
         if done: update = reward
         set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
 
