@@ -18,8 +18,8 @@ argmax = lambda pairs: max(pairs, key=lambda x: x[1])[0]
 argmax_index = lambda values: argmax(enumerate(values))
 
 class TabularLearner:
-    BUCKETS = (50, 200, 50, 200)
-    LIMITS = (4.8, 30, 0.42, 30)
+    BUCKETS = (15, 15, 10, 10)
+    LIMITS = (4.8, 5, 0.42, 5)
     DISCOUNT = 0.95
     ALPHA_MIN = 0.05
 
@@ -66,7 +66,7 @@ class TabularSARSALearner(TabularLearner):
         set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
 
 
-learner = TabularSARSALearner(env.action_space.n)
+learner = TabularQLearner(env.action_space.n)
 
 
 def main():
@@ -75,7 +75,9 @@ def main():
         i_episode += 1
         observation = env.reset()
         for t in range(1000):
-            if i_episode % 10000 == 0 or i_episode > 100000: env.render()
+            if i_episode % 10000 == 0 or i_episode > 2000000: 
+                env.render()
+                print(observation)
             action = learner.act(observation)
             observation, reward, done, info = env.step(action)
             learner.learn(observation, reward, done)
