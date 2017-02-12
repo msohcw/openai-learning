@@ -17,15 +17,16 @@ def set_multidex(iterable, index, value):
 argmax = lambda pairs: max(pairs, key=lambda x: x[1])[0]
 argmax_index = lambda values: argmax(enumerate(values))
 
-class TabularQLearner:
+class TabularLearner:
     BUCKETS = (50, 200, 50, 200)
     LIMITS = (4.8, 30, 0.42, 30)
-    ALPHA = 0.3
     DISCOUNT = 0.95
+    ALPHA_MIN = 0.05
 
     def __init__(self, actions, buckets = BUCKETS):
         self.Q = multidim(buckets + (actions,), lambda: random.random())
         self.eps = 0.3
+        self.alpha = 0.5
         self.actions = actions
 
     def act(self, observation):
@@ -35,13 +36,15 @@ class TabularQLearner:
             action = argmax_index(multidex(self.Q, self.discretized(observation)))
         self.last = (action, observation)
         self.eps -= 0.00001
+        self.eps = max(0, self.eps)
+        self.alpha -= 0.0001
         return action
 
     def learn(self, observation, reward, done):
         a_t, s_t = self.last
         prev = multidex(self.Q, self.discretized(s_t) + (a_t,))
         now = multidex(self.Q, self.discretized(observation))
-        update = prev + max(TabularQLearner.ALPHA, self.eps) * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
+        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
         if done: update = reward
         set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
 
@@ -49,7 +52,22 @@ class TabularQLearner:
         bounded = [min(self.LIMITS[i],max(-self.LIMITS[i], observation[i])) for i in range(len(observation))]
         return tuple(math.floor((bounded[i] + self.LIMITS[i]) / 2 / self.LIMITS[i] * self.BUCKETS[i]) for i in range(len(bounded)))
         
-learner = TabularQLearner(env.action_space.n)
+class TabularQLearner(TabularLearner):
+    pass
+
+class TabularSARSALearner(TabularLearner):
+    def learn(self, observation, reward, done):
+        a_t, s_t = self.last
+        prev = multidex(self.Q, self.discretized(s_t) + (a_t,))
+        now = multidex(self.Q, self.discretized(observation))
+        expected = max(now) * (1 - self.eps) + self.eps * sum(now)/len(now)
+        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * expected - prev)
+        if done: update = reward
+        set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
+
+
+learner = TabularSARSALearner(env.action_space.n)
+
 
 def main():
     i_episode = 0
