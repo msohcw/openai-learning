@@ -45,7 +45,8 @@ class TabularLearner:
         prev = multidex(self.Q, self.discretized(s_t) + (a_t,))
         now = multidex(self.Q, self.discretized(observation))
         update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
-        if done: update = reward
+        if done: update = -100
+        if done and reward == 1000: update = reward
         set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
 
     def discretized(self, observation):
@@ -75,7 +76,7 @@ def main():
         i_episode += 1
         observation = env.reset()
         for t in range(1000):
-            if i_episode % 10000 == 0 or i_episode > 2000000: 
+            if i_episode % 10000 == 0 or i_episode > 20000: 
                 env.render()
                 print(observation)
             action = learner.act(observation)
