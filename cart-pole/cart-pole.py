@@ -1,9 +1,12 @@
 import gym
+from gym import wrappers
 import random
 import math
 import numpy as np
+import os
 
 env = gym.make('CartPole-v0')
+env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
 
 def multidim(dim, init = lambda: None):
     return np.random.rand(*dim)
@@ -19,14 +22,17 @@ argmax_index = lambda values: argmax(enumerate(values))
 
 class TabularLearner:
     BUCKETS = (15, 15, 10, 10)
-    LIMITS = (4.8, 5, 0.42, 5)
+    LIMITS = (4.8, 10, 0.42, 5)
+    #BUCKETS = (10, 10)
+    #LIMITS = (1.2, 0.07)
     DISCOUNT = 0.95
     ALPHA_MIN = 0.05
+    TIMESTEP_MAX = 200
 
     def __init__(self, actions, buckets = BUCKETS):
         self.Q = multidim(buckets + (actions,), lambda: random.random())
         self.eps = 0.3
-        self.alpha = 0.5
+        self.alpha = 1
         self.actions = actions
 
     def act(self, observation):
@@ -40,17 +46,21 @@ class TabularLearner:
         self.alpha -= 0.0001
         return action
 
-    def learn(self, observation, reward, done):
+    def learn(self, observation, reward, done, t):
         a_t, s_t = self.last
         prev = multidex(self.Q, self.discretized(s_t) + (a_t,))
         now = multidex(self.Q, self.discretized(observation))
         update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
-        if done: update = -100
-        if done and reward == 1000: update = reward
+        if done:
+            if t != TabularLearner.TIMESTEP_MAX: 
+                update = -TabularLearner.TIMESTEP_MAX
+            else:
+                update = 100
         set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
 
     def discretized(self, observation):
-        bounded = [min(self.LIMITS[i],max(-self.LIMITS[i], observation[i])) for i in range(len(observation))]
+        eps = 0.000001
+        bounded = [min(self.LIMITS[i] - eps,max(-self.LIMITS[i] + eps, observation[i])) for i in range(len(observation))]
         return tuple(math.floor((bounded[i] + self.LIMITS[i]) / 2 / self.LIMITS[i] * self.BUCKETS[i]) for i in range(len(bounded)))
         
 class TabularQLearner(TabularLearner):
@@ -66,25 +76,22 @@ class TabularSARSALearner(TabularLearner):
         if done: update = reward
         set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
 
-
-learner = TabularQLearner(env.action_space.n)
-
-
+max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
 def main():
-    i_episode = 0
-    while True:
-        i_episode += 1
+    total = 0
+    learner = TabularQLearner(env.action_space.n)
+    for i_episode in range(1, 3001):
         observation = env.reset()
-        for t in range(1000):
-            if i_episode % 10000 == 0 or i_episode > 20000: 
-                env.render()
-                print(observation)
+        ep_reward = 0
+        for t in range(max_steps):
             action = learner.act(observation)
             observation, reward, done, info = env.step(action)
-            learner.learn(observation, reward, done)
-            if done:
-                print("Episode {0:8d}: {1:4d} timesteps".format(i_episode, t+1))
-                break
-            
+            learner.learn(observation, reward, done, t+1)
+            ep_reward += reward
+            if done: break
+        total += ep_reward
+        print("Episode {0:8d}: {1:4d} timesteps, {2:4f} average".format(i_episode, t+1, total/i_episode))
+    env.close()
+    gym.upload('/tmp/cartpole0', api_key='sk_Q5yxeYioS96EjTbGnXtWxA')
 main()
 
