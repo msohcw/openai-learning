@@ -10,21 +10,20 @@ from keras.layers import Dense
 
 env = gym.make('CartPole-v0')
 env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
-
-argmax = lambda pairs: max(pairs, key=lambda x: x[1])[0]
-argmax_index = lambda values: argmax(enumerate(values))
+EPSILON = 1 * 10 ** -6
 
 class TabularLearner:
-    BUCKETS = (15, 15, 10, 10)
-    LIMITS = (4.8, 10, 0.42, 5)
     DISCOUNT = 0.95
     ALPHA_MIN = 0.05
     TIMESTEP_MAX = 200
-    def __init__(self, actions, buckets = BUCKETS):
+
+    def __init__(self, actions, buckets, limits):
         self.Q = np.random.rand(*buckets, actions)
         self.eps = 0.3
         self.alpha = 1
         self.actions = actions
+        self.buckets = buckets
+        self.limits = limits
 
     def act(self, observation):
         if random.random() < self.eps:
@@ -41,9 +40,10 @@ class TabularLearner:
         pass
 
     def discretized(self, observation):
-        eps = 0.000001
-        bounded = [min(self.LIMITS[i] - eps,max(-self.LIMITS[i] + eps, observation[i])) for i in range(len(observation))]
-        return tuple(math.floor((bounded[i] + self.LIMITS[i]) / 2 / self.LIMITS[i] * self.BUCKETS[i]) for i in range(len(bounded)))
+        b, l = self.buckets, self.limits # shorthand
+        # EPSILON used to keep within bucket bounds
+        bounded = [min(l[i] - EPSILON,max(-l[i] + EPSILON, observation[i])) for i in range(len(observation))]
+        return tuple(math.floor((bounded[i] + l[i]) / 2 / l[i] * b[i]) for i in range(len(bounded)))
         
 class TabularQLearner(TabularLearner):
     def learn(self, s0, observation, reward, action, done, t):
@@ -149,8 +149,10 @@ max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
 
 def main():
     total = 0
+    BUCKETS = (15, 15, 10, 10)
+    LIMITS = (4.8, 10, 0.42, 5)
     #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000)
-    learner = TabularQLearner(env.action_space.n)
+    learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS)
     for i_episode in range(1000):
         observation = env.reset()
         ep_reward = 0
