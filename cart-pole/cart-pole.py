@@ -129,7 +129,7 @@ class DeepQLearner:
         for k, q in enumerate(s0_q_values):
             a = int(action[k])
             if bool(done[k]):
-                if t == 200:
+                if t[k] == 200:
                     q[a] = 10
                 else:
                     q[a] = -10
@@ -146,25 +146,24 @@ class DeepQLearner:
 max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
 
 def main():
-    total = 0
     BUCKETS = (15, 15, 10, 10)
     LIMITS = (4.8, 10, 0.42, 5)
+    no_drop = lambda r, t: -200 if t != TIMESTEP_MAX else 10
     TIMESTEP_MAX = max_steps
 
-    no_drop = lambda r, t: -200 if t != TIMESTEP_MAX else 10
-    #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000)
+    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000)
     #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
-    learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
-    
+    #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
 
+    total = 0
     for i_episode in range(1000):
-        observation = env.reset()
+        s1 = env.reset()
         ep_reward = 0
         for t in range(max_steps):
-            action = learner.act(observation)
-            s0 = observation
-            observation, reward, done, info = env.step(action)
-            learner.learn(s0, observation, reward, action, done, t+1)
+            action = learner.act(s1)
+            s0 = s1
+            s1, reward, done, info = env.step(action)
+            learner.learn(s0, s1, reward, action, done, t+1)
             ep_reward += reward
             if done: break
         total += ep_reward
