@@ -13,13 +13,13 @@ env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
 EPSILON = 1 * 10 ** -6
 
 class TabularLearner:
-    ALPHA_MIN = 0.05
     TIMESTEP_MAX = 200
 
-    def __init__(self, actions, buckets, limits, discount = 0.95, eps = 0.3, alpha = 0.5):
+    def __init__(self, actions, buckets, limits, discount = 0.95, eps = 0.3, alpha = 0.5, alpha_min = 0.1):
         self.Q = np.random.rand(*buckets, actions)
         self.eps = eps
         self.alpha = alpha
+        self.alpha_min = alpha_min
         self.actions = actions
         self.buckets = buckets
         self.limits = limits
@@ -50,7 +50,7 @@ class TabularQLearner(TabularLearner):
         a_t, s_t = self.last
         prev = self.Q[self.discretized(s_t) + (a_t,)]
         now = self.Q[self.discretized(observation)]
-        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + self.discount * max(now) - prev)
+        update = prev + max(self.alpha_min, self.alpha) * (reward + self.discount * max(now) - prev)
         if done:
             if t != TabularLearner.TIMESTEP_MAX: 
                 update = -TabularLearner.TIMESTEP_MAX
@@ -64,7 +64,7 @@ class TabularSARSALearner(TabularLearner):
         prev = self.Q[self.discretized(s_t) + (a_t,)]
         now = self.Q[self.discretized(observation)]
         expected = max(now) * (1 - self.eps) + self.eps * sum(now)/len(now)
-        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + self.discount * expected - prev)
+        update = prev + max(self.alpha_min, self.alpha) * (reward + self.discount * expected - prev)
         if done: update = reward
         self.Q[self.discretized(s_t) + (a_t,)] = update
 
