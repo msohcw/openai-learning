@@ -11,10 +11,6 @@ from keras.layers import Dense
 env = gym.make('CartPole-v0')
 env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
 
-
-def set_multidex(iterable, index, value):
-    iterable[index] = value
-
 argmax = lambda pairs: max(pairs, key=lambda x: x[1])[0]
 argmax_index = lambda values: argmax(enumerate(values))
 
@@ -60,7 +56,7 @@ class TabularQLearner(TabularLearner):
                 update = -TabularLearner.TIMESTEP_MAX
             else:
                 update = 100
-        set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
+        self.Q[self.discretized(s_t) + (a_t,)] = update
 
 class TabularSARSALearner(TabularLearner):
     def learn(self, observation, reward, done):
@@ -70,7 +66,7 @@ class TabularSARSALearner(TabularLearner):
         expected = max(now) * (1 - self.eps) + self.eps * sum(now)/len(now)
         update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * expected - prev)
         if done: update = reward
-        set_multidex(self.Q, self.discretized(s_t) + (a_t,), update)
+        self.Q[self.discretized(s_t) + (a_t,)] = update
 
 class DeepQLearner:
     MINIMUM_EXPERIENCE = 200
