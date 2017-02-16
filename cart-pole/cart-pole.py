@@ -71,9 +71,11 @@ class TabularSARSALearner(TabularLearner):
 class DeepQLearner:
     MINIMUM_EXPERIENCE = 200
 
-    def __init__(self, input_dim, layers, batch_size, total_memory):
+    def __init__(self, input_dim, layers, batch_size, total_memory, terminal_fn):
         self.total_memory = total_memory
         self.batch_size = batch_size
+        self.terminal_fn = terminal_fn
+
         # experience has s0, action, reward, s1, and done? and t
         self.experience = np.zeros((input_dim * 2 + 4, total_memory))
         self.exp_ct = 0
@@ -129,10 +131,7 @@ class DeepQLearner:
         for k, q in enumerate(s0_q_values):
             a = int(action[k])
             if bool(done[k]):
-                if t[k] == 200:
-                    q[a] = 10
-                else:
-                    q[a] = -10
+                q[a] = self.terminal_fn(r, t[k])
             else:
                 q[a] = r[k] + 0.95 * s1_q_values[k]
         
@@ -148,12 +147,12 @@ max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
 def main():
     BUCKETS = (15, 15, 10, 10)
     LIMITS = (4.8, 10, 0.42, 5)
-    no_drop = lambda r, t: -200 if t != TIMESTEP_MAX else 10
+    no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
     TIMESTEP_MAX = max_steps
 
-    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000)
-    #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
-    #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
+    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000, no_drop(-1, 2))
+    #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
+    #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
 
     total = 0
     for i_episode in range(1000):
