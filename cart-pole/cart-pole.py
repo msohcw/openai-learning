@@ -65,7 +65,7 @@ class TabularQLearner(TabularLearner):
 class TabularSARSALearner(TabularLearner):
     # override
     def update_fn(self, q0_a, q1, r):
-        expected = max(q1) * (1 - self.eps) + self.eps * sum(now) / len (now)
+        expected = max(q1) * (1 - self.eps) + self.eps * sum(q1) / len (q1)
         return q0_a + max(self.alpha_min, self.alpha) * (r + self.discount * expected - q0_a)
 
 class DeepQLearner:
@@ -151,11 +151,12 @@ def main():
     LIMITS = (4.8, 10, 0.42, 5)
     TIMESTEP_MAX = max_steps
 
-    #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000)
-    
     no_drop = lambda r, t: -200 if t != TIMESTEP_MAX else 10
+    #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000)
+    #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
+    learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
+    
 
-    learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop)
     for i_episode in range(1000):
         observation = env.reset()
         ep_reward = 0
@@ -169,7 +170,7 @@ def main():
         total += ep_reward
         print("Episode {0:8d}: {1:4d} timesteps, {2:4f} average".format(i_episode, t+1, total/(i_episode+1)))
     env.close()
-    gym.upload('/tmp/cartpole0', api_key='sk_Q5yxeYioS96EjTbGnXtWxA')
+    #gym.upload('/tmp/cartpole0', api_key='sk_Q5yxeYioS96EjTbGnXtWxA')
 main()
 
 
