@@ -13,17 +13,20 @@ env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
 EPSILON = 1 * 10 ** -6
 
 class TabularLearner:
-    def __init__(self, actions, buckets, limits, terminal_fn, discount = 0.95, eps = 0.3, alpha = 0.5, alpha_min = 0.1):
+    def __init__(self, actions, buckets, limits, terminal_fn, 
+                        discount = 0.95, eps = 0.3, alpha = 0.5, alpha_min = 0.1, eps_dt = -10 ** -5, alpha_dt = -10 ** -4):
         self.Q = np.random.rand(*buckets, actions)
         self.actions = actions
         self.buckets = buckets
         self.limits = limits
         self.terminal_fn = terminal_fn
 
-        self.eps = eps
-        self.alpha = alpha
-        self.alpha_min = alpha_min
         self.discount = discount
+        self.eps = eps
+        self.eps_dt = eps_dt
+        self.alpha = alpha
+        self.alpha_dt = alpha_dt
+        self.alpha_min = alpha_min
 
     def act(self, observation):
         if random.random() < self.eps:
@@ -31,9 +34,7 @@ class TabularLearner:
         else:
             action = np.argmax(self.Q[self.discretized(observation)])
         self.last = (action, observation)
-        self.eps -= 0.00001
-        self.eps = max(0, self.eps)
-        self.alpha -= 0.0001
+        self.eps = max(0, self.eps + self.eps_dt)
         return action
     
     def learn(self, s0, s1, reward, action, done, t):
@@ -45,6 +46,7 @@ class TabularLearner:
         else:# update as per normal
             update = self.update_fn(prev, now, reward)
         self.Q[self.discretized(s_t) + (a_t,)] = update
+        self.alpha = max(self.alpha_min, self.alpha + self.alpha_dt)
 
     def update_fn(self, q0_a, q1, r):
         return max(q1)
@@ -61,14 +63,10 @@ class TabularQLearner(TabularLearner):
         return q0_a + max(self.alpha_min, self.alpha) * (r + self.discount * max(q1) - q0_a)
 
 class TabularSARSALearner(TabularLearner):
-    def learn(self, observation, reward, done):
-        a_t, s_t = self.last
-        prev = self.Q[self.discretized(s_t) + (a_t,)]
-        now = self.Q[self.discretized(observation)]
-        expected = max(now) * (1 - self.eps) + self.eps * sum(now)/len(now)
-        update = prev + max(self.alpha_min, self.alpha) * (reward + self.discount * expected - prev)
-        if done: update = reward
-        self.Q[self.discretized(s_t) + (a_t,)] = update
+    # override
+    def update_fn(self, q0_a, q1, r):
+        expected = max(q1) * (1 - self.eps) + self.eps * sum(now) / len (now)
+        return q0_a + max(self.alpha_min, self.alpha) * (r + self.discount * expected - q0_a)
 
 class DeepQLearner:
     MINIMUM_EXPERIENCE = 200
@@ -115,7 +113,7 @@ class DeepQLearner:
     def experience_replay(self):
         subset_index = np.random.choice(self.exp_ct, self.batch_size, replace = False)
 
-
+        # this hideous mess encodes an experience
         subset = self.experience[:, subset_index]
         s0 = subset[:self.input_dim, :]
         s1 = subset[self.input_dim:self.input_dim*2, :]
