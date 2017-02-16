@@ -13,17 +13,17 @@ env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
 EPSILON = 1 * 10 ** -6
 
 class TabularLearner:
-    DISCOUNT = 0.95
     ALPHA_MIN = 0.05
     TIMESTEP_MAX = 200
 
-    def __init__(self, actions, buckets, limits):
+    def __init__(self, actions, buckets, limits, discount = 0.95, eps = 0.3, alpha = 0.5):
         self.Q = np.random.rand(*buckets, actions)
-        self.eps = 0.3
-        self.alpha = 1
+        self.eps = eps
+        self.alpha = alpha
         self.actions = actions
         self.buckets = buckets
         self.limits = limits
+        self.discount = discount
 
     def act(self, observation):
         if random.random() < self.eps:
@@ -50,7 +50,7 @@ class TabularQLearner(TabularLearner):
         a_t, s_t = self.last
         prev = self.Q[self.discretized(s_t) + (a_t,)]
         now = self.Q[self.discretized(observation)]
-        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
+        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + self.discount * max(now) - prev)
         if done:
             if t != TabularLearner.TIMESTEP_MAX: 
                 update = -TabularLearner.TIMESTEP_MAX
@@ -64,7 +64,7 @@ class TabularSARSALearner(TabularLearner):
         prev = self.Q[self.discretized(s_t) + (a_t,)]
         now = self.Q[self.discretized(observation)]
         expected = max(now) * (1 - self.eps) + self.eps * sum(now)/len(now)
-        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * expected - prev)
+        update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + self.discount * expected - prev)
         if done: update = reward
         self.Q[self.discretized(s_t) + (a_t,)] = update
 
@@ -151,6 +151,7 @@ def main():
     total = 0
     BUCKETS = (15, 15, 10, 10)
     LIMITS = (4.8, 10, 0.42, 5)
+
     #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000)
     learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS)
     for i_episode in range(1000):
