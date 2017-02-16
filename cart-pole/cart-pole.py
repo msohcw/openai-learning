@@ -11,14 +11,6 @@ from keras.layers import Dense
 env = gym.make('CartPole-v0')
 env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
 
-"""
-
-def multidim(dim, init = lambda: None):
-    return np.random.rand(*dim)
-"""
-
-def multidex(iterable, index):
-    return iterable[index]
 
 def set_multidex(iterable, index, value):
     iterable[index] = value
@@ -32,7 +24,6 @@ class TabularLearner:
     DISCOUNT = 0.95
     ALPHA_MIN = 0.05
     TIMESTEP_MAX = 200
-
     def __init__(self, actions, buckets = BUCKETS):
         self.Q = np.random.rand(*buckets, actions)
         self.eps = 0.3
@@ -43,7 +34,7 @@ class TabularLearner:
         if random.random() < self.eps:
             action = math.floor(random.random() * self.actions)
         else:
-            action = argmax_index(multidex(self.Q, self.discretized(observation)))
+            action = np.argmax(self.Q[self.discretized(observation)])
         self.last = (action, observation)
         self.eps -= 0.00001
         self.eps = max(0, self.eps)
@@ -61,8 +52,8 @@ class TabularLearner:
 class TabularQLearner(TabularLearner):
     def learn(self, s0, observation, reward, action, done, t):
         a_t, s_t = self.last
-        prev = multidex(self.Q, self.discretized(s_t) + (a_t,))
-        now = multidex(self.Q, self.discretized(observation))
+        prev = self.Q[self.discretized(s_t) + (a_t,)]
+        now = self.Q[self.discretized(observation)]
         update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * max(now) - prev)
         if done:
             if t != TabularLearner.TIMESTEP_MAX: 
@@ -74,8 +65,8 @@ class TabularQLearner(TabularLearner):
 class TabularSARSALearner(TabularLearner):
     def learn(self, observation, reward, done):
         a_t, s_t = self.last
-        prev = multidex(self.Q, self.discretized(s_t) + (a_t,))
-        now = multidex(self.Q, self.discretized(observation))
+        prev = self.Q[self.discretized(s_t) + (a_t,)]
+        now = self.Q[self.discretized(observation)]
         expected = max(now) * (1 - self.eps) + self.eps * sum(now)/len(now)
         update = prev + max(TabularQLearner.ALPHA_MIN, self.alpha) * (reward + TabularQLearner.DISCOUNT * expected - prev)
         if done: update = reward
