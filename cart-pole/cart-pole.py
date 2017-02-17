@@ -9,7 +9,7 @@ from keras.models import Sequential
 from keras.layers import Dense
 
 env = gym.make('CartPole-v0')
-env = wrappers.Monitor(env, "/tmp/cartpole0", force = True)
+env = wrappers.Monitor(env, "/tmp/cartpole1", force = True)
 EPSILON = 1 * 10 ** -6
 
 class TabularLearner:
@@ -33,19 +33,17 @@ class TabularLearner:
             action = math.floor(random.random() * self.actions)
         else: # exploit
             action = np.argmax(self.Q[self.discretized(observation)])
-        self.last = (action, observation)
         self.eps = max(0, self.eps + self.eps_dt)
         return action
     
     def learn(self, s0, s1, reward, action, done, t):
-        a_t, s_t = self.last
-        prev = self.Q[self.discretized(s_t) + (a_t,)]
+        prev = self.Q[self.discretized(s0) + (action,)]
         now = self.Q[self.discretized(s1)]
         if done: # update should be terminal state update
             update = self.terminal_fn(reward, t)
         else: # update as per normal
             update = self.update_fn(prev, now, reward)
-        self.Q[self.discretized(s_t) + (a_t,)] = update
+        self.Q[self.discretized(s0) + (action,)] = update
         self.alpha = max(self.alpha_min, self.alpha + self.alpha_dt)
 
     def update_fn(self, q0_a, q1, r):
@@ -196,7 +194,7 @@ def main():
 
     learner = DoubleDeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
     #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
-    #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
+    learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
     #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
 
     total = 0
