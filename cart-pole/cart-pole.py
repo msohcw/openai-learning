@@ -29,9 +29,9 @@ class TabularLearner:
         self.alpha_min = alpha_min
 
     def act(self, observation):
-        if random.random() < self.eps:
+        if random.random() < self.eps: # explore
             action = math.floor(random.random() * self.actions)
-        else:
+        else: # exploit
             action = np.argmax(self.Q[self.discretized(observation)])
         self.last = (action, observation)
         self.eps = max(0, self.eps + self.eps_dt)
@@ -43,13 +43,13 @@ class TabularLearner:
         now = self.Q[self.discretized(s1)]
         if done: # update should be terminal state update
             update = self.terminal_fn(reward, t)
-        else:# update as per normal
+        else: # update as per normal
             update = self.update_fn(prev, now, reward)
         self.Q[self.discretized(s_t) + (a_t,)] = update
         self.alpha = max(self.alpha_min, self.alpha + self.alpha_dt)
 
     def update_fn(self, q0_a, q1, r):
-        return max(q1)
+        return max(q1) # default, bad update
 
     def discretized(self, observation):
         b, l = self.buckets, self.limits # shorthand
@@ -58,12 +58,10 @@ class TabularLearner:
         return tuple(math.floor((bounded[i] + l[i]) / 2 / l[i] * b[i]) for i in range(len(bounded)))
         
 class TabularQLearner(TabularLearner):
-    # override
     def update_fn(self, q0_a, q1, r):
         return q0_a + max(self.alpha_min, self.alpha) * (r + self.discount * max(q1) - q0_a)
 
 class TabularSARSALearner(TabularLearner):
-    # override
     def update_fn(self, q0_a, q1, r):
         expected = max(q1) * (1 - self.eps) + self.eps * sum(q1) / len (q1)
         return q0_a + max(self.alpha_min, self.alpha) * (r + self.discount * expected - q0_a)
@@ -72,12 +70,12 @@ class DeepQLearner:
     MINIMUM_EXPERIENCE = 1000
 
     def __init__(self, input_dim, layers, batch_size, total_memory, terminal_fn,
-                    eps = 0.1, eps_dt = -10 * 10 ** -5):
+                    eps = 0.1, eps_dt = -10 * 10 ** -5, discount = 0.95, target_freeze_duration = 2500):
         self.total_memory = total_memory
         self.batch_size = batch_size
         self.terminal_fn = terminal_fn
 
-        # experience has s0, action, reward, s1, and done? and t
+        # experience has s0, s1, action, reward, done? and t
         self.experience = np.zeros((input_dim * 2 + 4, total_memory))
         self.exp_ct = 0
         self.exp_index = 0
@@ -88,6 +86,8 @@ class DeepQLearner:
 
         self.eps = eps
         self.eps_dt = eps_dt
+        self.discount = discount
+        self.target_freeze_duration = target_freeze_duration
 
         first, layers, end = layers[0], layers[1:-1], layers[-1]
         
@@ -127,7 +127,7 @@ class DeepQLearner:
         self.exp_index += 1
         self.exp_index %= self.total_memory
 
-        if self.exp_index % 2500 == 0:
+        if self.exp_index % self.target_freeze_duration == 0:
             print("Copied to target network")
             self.target_model.set_weights(self.model.get_weights())
 
@@ -147,7 +147,6 @@ class DeepQLearner:
         t = subset[self.input_dim*2+3, :]
 
         s0_q_values = self.model.predict(s0.T) 
-        #s1_q_values = np.amax(self.target_model.predict(s1.T), axis = 1) # take maximum future
         s1_q_values = self.future_fn(s1)
 
         # update Q values
@@ -156,7 +155,7 @@ class DeepQLearner:
             if bool(done[k]):
                 q[a] = self.terminal_fn(r, t[k])
             else:
-                q[a] = r[k] + 0.95 * s1_q_values[k]
+                q[a] = r[k] + self.discount * s1_q_values[k]
         
         loss = self.model.train_on_batch(s0.T, s0_q_values)
 
@@ -174,10 +173,11 @@ class DeepQLearner:
 
 class DoubleDeepQLearner(DeepQLearner):
     def future_fn(self, s1):
+        # use model to pick actions, target to evaluate Q(s, a)
         actions = np.argmax(self.model.predict(s1.T), axis = 1)
         q_values = self.target_model.predict(s1.T)
         # I couldn't find a better numpy way to do this,
-        # it takes the element of ea row according to actions
+        # it takes the element of each row according to actions
         return np.diagonal(np.take(q_values, actions, axis = 1))
 
 # there's a bug with the unmonitored envs not checking max_steps
@@ -187,15 +187,15 @@ learner = None
 
 def main():
     global learner
-    BUCKETS = (15, 15, 10, 10)
-    LIMITS = (4.8, 10, 0.42, 5)
+    BUCKETS = (15, 15, 10, 10) # buckets to discretize
+    LIMITS = (4.8, 10, 0.42, 5) # limits to discretize
     TIMESTEP_MAX = max_steps
 
     # no_drop is a reward function that penalises falling before 200. accelerates learning massively.
     no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
 
-    #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
     learner = DoubleDeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
+    #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
     #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
     #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
 
@@ -204,7 +204,6 @@ def main():
         s1 = env.reset()
         ep_reward = 0
         for t in range(max_steps):
-            if total/(i_episode+1) > 100: env.render()
             action = learner.act(s1)
             s0 = s1
             s1, reward, done, info = env.step(action)
@@ -214,7 +213,8 @@ def main():
         total += ep_reward
         print("Episode {0:8d}: {1:4d} timesteps, {2:4f} average".format(i_episode, t+1, total/(i_episode+1)))
     env.close()
-    #gym.upload('/tmp/cartpole0', api_key='sk_Q5yxeYioS96EjTbGnXtWxA')
+    # uncomment this line with your api key if you want to upload to openai
+    #gym.upload('/tmp/cartpole0', api_key='')
 main()
 
 
