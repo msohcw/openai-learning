@@ -109,7 +109,7 @@ class DeepQLearner:
         self.model.add(end_layer)
         self.target_model.add(end_layer)
 
-        rms = keras.optimizers.RMSprop(lr=0.01, rho=0.9, epsilon=1e-08, decay=0.0)
+        rms = keras.optimizers.RMSprop(lr=0.003, rho=0.9, epsilon=1e-08, decay=0.0)
         self.model.compile(optimizer = rms, loss = 'mse')
         self.target_model.compile(optimizer = rms, loss = 'mse')
 
@@ -127,8 +127,8 @@ class DeepQLearner:
         self.exp_index += 1
         self.exp_index %= self.total_memory
 
-        if self.exp_index % 10000 == 0:
-            print("update")
+        if self.exp_index % 2500 == 0:
+            print("Copied to target network")
             self.target_model.set_weights(self.model.get_weights())
 
         if self.exp_ct > DeepQLearner.MINIMUM_EXPERIENCE: 
@@ -147,7 +147,8 @@ class DeepQLearner:
         t = subset[self.input_dim*2+3, :]
 
         s0_q_values = self.model.predict(s0.T) 
-        s1_q_values = np.amax(self.target_model.predict(s1.T), axis = 1) # take maximum future
+        #s1_q_values = np.amax(self.target_model.predict(s1.T), axis = 1) # take maximum future
+        s1_q_values = self.future_fn(s1)
 
         # update Q values
         for k, q in enumerate(s0_q_values):
@@ -159,6 +160,9 @@ class DeepQLearner:
         
         loss = self.model.train_on_batch(s0.T, s0_q_values)
 
+    def future_fn(self, s1):
+        return np.amax(self.target_model.predict(s1.T), axis = 1)
+
     def act(self, observation):
         q = self.model.predict(observation.reshape(1,4))
         if random.random() < self.eps:
@@ -167,6 +171,14 @@ class DeepQLearner:
             action = np.argmax(q)
         self.eps = max(0, self.eps + self.eps_dt)
         return action
+
+class DoubleDeepQLearner(DeepQLearner):
+    def future_fn(self, s1):
+        actions = np.argmax(self.model.predict(s1.T), axis = 1)
+        q_values = self.target_model.predict(s1.T)
+        # I couldn't find a better numpy way to do this,
+        # it takes the element of ea row according to actions
+        return np.diagonal(np.take(q_values, actions, axis = 1))
 
 # there's a bug with the unmonitored envs not checking max_steps
 max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
@@ -177,10 +189,13 @@ def main():
     global learner
     BUCKETS = (15, 15, 10, 10)
     LIMITS = (4.8, 10, 0.42, 5)
-    no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
     TIMESTEP_MAX = max_steps
 
-    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
+    # no_drop is a reward function that penalises falling before 200. accelerates learning massively.
+    no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
+
+    #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
+    learner = DoubleDeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
     #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
     #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
 
