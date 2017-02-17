@@ -69,9 +69,10 @@ class TabularSARSALearner(TabularLearner):
         return q0_a + max(self.alpha_min, self.alpha) * (r + self.discount * expected - q0_a)
 
 class DeepQLearner:
-    MINIMUM_EXPERIENCE = 200
+    MINIMUM_EXPERIENCE = 1000
 
-    def __init__(self, input_dim, layers, batch_size, total_memory, terminal_fn):
+    def __init__(self, input_dim, layers, batch_size, total_memory, terminal_fn,
+                    eps = 0.1, eps_dt = -10 * 10 ** -5):
         self.total_memory = total_memory
         self.batch_size = batch_size
         self.terminal_fn = terminal_fn
@@ -81,19 +82,36 @@ class DeepQLearner:
         self.exp_ct = 0
         self.exp_index = 0
         self.model = Sequential()
+        self.target_model = Sequential()
         self.input_dim = input_dim
+        self.actions = layers[-1]
+
+        self.eps = eps
+        self.eps_dt = eps_dt
 
         first, layers, end = layers[0], layers[1:-1], layers[-1]
-        self.model.add(Dense(first, 
-            batch_input_shape=(None, input_dim), 
-            init = 'uniform', 
-            activation = 'relu'))
+        
+        first_layer = Dense(first,
+                            batch_input_shape = (None, input_dim),
+                            init = 'uniform',
+                            activation = 'relu')
+
+        self.model.add(first_layer)
+        self.target_model.add(first_layer)
+        
         for layer in layers:
-            self.model.add(Dense(layer, activation = 'relu', init = 'uniform'))
+            l = Dense(layer, activation = 'relu', init = 'uniform')
+            self.model.add(l)
+            self.target_model.add(l)
+            
         # end with linear to sum to Q-value
-        self.model.add(Dense(end, activation = 'linear', init = 'uniform'))
+        end_layer = Dense(end, activation = 'linear', init = 'uniform')
+        self.model.add(end_layer)
+        self.target_model.add(end_layer)
+
         rms = keras.optimizers.RMSprop(lr=0.01, rho=0.9, epsilon=1e-08, decay=0.0)
         self.model.compile(optimizer = rms, loss = 'mse')
+        self.target_model.compile(optimizer = rms, loss = 'mse')
 
     def learn(self, s0, s1, reward, action, done, t):
         memory = np.vstack((
@@ -108,6 +126,10 @@ class DeepQLearner:
         if self.exp_ct < self.total_memory: self.exp_ct += 1
         self.exp_index += 1
         self.exp_index %= self.total_memory
+
+        if self.exp_index % 10000 == 0:
+            print("update")
+            self.target_model.set_weights(self.model.get_weights())
 
         if self.exp_ct > DeepQLearner.MINIMUM_EXPERIENCE: 
             self.experience_replay()
@@ -125,7 +147,7 @@ class DeepQLearner:
         t = subset[self.input_dim*2+3, :]
 
         s0_q_values = self.model.predict(s0.T) 
-        s1_q_values = np.amax(self.model.predict(s1.T), axis = 1) # take maximum future
+        s1_q_values = np.amax(self.target_model.predict(s1.T), axis = 1) # take maximum future
 
         # update Q values
         for k, q in enumerate(s0_q_values):
@@ -139,18 +161,26 @@ class DeepQLearner:
 
     def act(self, observation):
         q = self.model.predict(observation.reshape(1,4))
-        return np.argmax(q)
+        if random.random() < self.eps:
+            action = math.floor(random.random() * self.actions)
+        else:
+            action = np.argmax(q)
+        self.eps = max(0, self.eps + self.eps_dt)
+        return action
 
 # there's a bug with the unmonitored envs not checking max_steps
 max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
 
+learner = None
+
 def main():
+    global learner
     BUCKETS = (15, 15, 10, 10)
     LIMITS = (4.8, 10, 0.42, 5)
     no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
     TIMESTEP_MAX = max_steps
 
-    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 128, 10000, no_drop(-1, 2))
+    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
     #learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
     #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
 
@@ -159,6 +189,7 @@ def main():
         s1 = env.reset()
         ep_reward = 0
         for t in range(max_steps):
+            if total/(i_episode+1) > 100: env.render()
             action = learner.act(s1)
             s0 = s1
             s1, reward, done, info = env.step(action)
