@@ -151,7 +151,7 @@ class DeepQLearner:
         for k, q in enumerate(s0_q_values):
             a = int(action[k])
             if bool(done[k]):
-                q[a] = self.terminal_fn(r, t[k])
+                q[a] = self.terminal_fn(r[k], t[k])
             else:
                 q[a] = r[k] + self.discount * s1_q_values[k]
         
