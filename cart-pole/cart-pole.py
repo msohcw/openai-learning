@@ -9,14 +9,15 @@ from keras.models import Sequential
 from keras.layers import Dense
 
 from replay_buffer import ReplayBuffer
+from exploration import EpsilonGreedy
 
 env = gym.make('CartPole-v0')
 env = wrappers.Monitor(env, "/tmp/cartpole1", force = True)
 EPSILON = 1 * 10 ** -6
 
 class TabularLearner:
-    def __init__(self, actions, buckets, limits, terminal_fn, 
-                        discount = 0.95, eps = 0.3, alpha = 0.5, alpha_min = 0.1, eps_dt = -10 ** -5, alpha_dt = -10 ** -4):
+    def __init__(self, actions, buckets, limits, terminal_fn, exploration_fn,
+                        discount = 0.95, alpha = 0.5, alpha_min = 0.1, alpha_dt = -10 ** -4):
         self.Q = np.random.rand(*buckets, actions)
         self.actions = actions
         self.buckets = buckets
@@ -30,13 +31,17 @@ class TabularLearner:
         self.alpha_dt = alpha_dt
         self.alpha_min = alpha_min
 
+        self.exploration_fn = exploration_fn(self)
+
     def act(self, observation):
-        if random.random() < self.eps: # explore
-            action = math.floor(random.random() * self.actions)
-        else: # exploit
-            action = np.argmax(self.Q[self.discretized(observation)])
-        self.eps = max(0, self.eps + self.eps_dt)
+        action = self.exploration_fn.explore(observation)
+        self.exploration_fn.modify_eps()
         return action
+
+    def Q(self, s): 
+        # abstracts Q(s, a) to allow for general exploration functions
+        # returns Q value for given state for all a
+        return self.Q[self.discretized(s)] 
     
     def learn(self, s0, s1, reward, action, done, t):
         prev = self.Q[self.discretized(s0) + (action,)]
@@ -66,10 +71,10 @@ class TabularSARSALearner(TabularLearner):
         expected = max(q1) * (1 - self.eps) + self.eps * sum(q1) / len (q1)
         return q0_a + max(self.alpha_min, self.alpha) * (r + self.discount * expected - q0_a)
 
-class DeepQLearner:
+class DeepQLearner(TabularLearner):
     MINIMUM_EXPERIENCE = 1000
 
-    def __init__(self, input_dim, layers, batch_size, total_memory, terminal_fn,
+    def __init__(self, input_dim, layers, batch_size, total_memory, terminal_fn, exploration_fn, 
                     eps = 0.1, eps_dt = -10 * 10 ** -5, discount = 0.95, target_freeze_duration = 2500):
         self.total_memory = total_memory
         self.batch_size = batch_size
@@ -85,8 +90,7 @@ class DeepQLearner:
         self.input_dim = input_dim
         self.actions = layers[-1]
 
-        self.eps = eps
-        self.eps_dt = eps_dt
+        self.exploration_fn = exploration_fn(self)
         self.discount = discount
         self.target_freeze_duration = target_freeze_duration
 
@@ -127,11 +131,11 @@ class DeepQLearner:
     def experience_replay(self):
         replays = self.replay_buffer.sample(self.batch_size)
         s0 = replays.get('s0')
-        s1 = replays.get('s0')
-        r = replays.get('r')
-        action = replays.get('action')
-        done = replays.get('done')
-        t = replays.get('t')
+        s1 = replays.get('s1')
+        r = replays.get('r').flatten()
+        action = replays.get('action').flatten()
+        done = replays.get('done').flatten()
+        t = replays.get('t').flatten()
 
         s0_q_values = self.model.predict(s0.T) 
         s1_q_values = self.future_fn(s1)
@@ -149,14 +153,8 @@ class DeepQLearner:
     def future_fn(self, s1):
         return np.amax(self.target_model.predict(s1.T), axis = 1)
 
-    def act(self, observation):
-        q = self.model.predict(observation.reshape(1,4))
-        if random.random() < self.eps:
-            action = math.floor(random.random() * self.actions)
-        else:
-            action = np.argmax(q)
-        self.eps = max(0, self.eps + self.eps_dt)
-        return action
+    def Q(self, s):
+        return self.model.predict(s.reshape(1,4))
 
 class DoubleDeepQLearner(DeepQLearner):
     def future_fn(self, s1):
@@ -180,10 +178,16 @@ def main():
 
     # no_drop is a reward function that penalises falling before 200. accelerates learning massively.
     no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
-
-    learner = DoubleDeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
-    #learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10))
-    learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
+    """
+    learner = DoubleDeepQLearner(len(env.observation_space.high), 
+                                (8, 16, 32, env.action_space.n),
+                                256, 
+                                100000, 
+                                no_drop(-10, 10),
+                                lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5)) """
+    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10), 
+            lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5))
+    # learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
     #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
 
     total = 0

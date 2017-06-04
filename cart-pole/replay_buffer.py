@@ -19,7 +19,7 @@ class ReplayBuffer:
         for key in kwargs:
             if key not in self.map: continue
             s, e = self.map[key]
-            replay[s:e] = kwargs[key].flatten()
+            replay[s:e] = kwargs[key]
         self.memory[:, self.index] = replay
         
         self.count += 1
@@ -32,5 +32,5 @@ class ReplayBuffer:
         ret = {}
         for key in self.map:
             s, e = self.map[key]
-            ret[key] = self.memory[s:e, :]
+            ret[key] = subset[s:e, :]
         return ret
