@@ -8,6 +8,8 @@ import keras
 from keras.models import Sequential
 from keras.layers import Dense
 
+from replay_buffer import ReplayBuffer
+
 env = gym.make('CartPole-v0')
 env = wrappers.Monitor(env, "/tmp/cartpole1", force = True)
 EPSILON = 1 * 10 ** -6
@@ -73,8 +75,9 @@ class DeepQLearner:
         self.batch_size = batch_size
         self.terminal_fn = terminal_fn
 
-        # experience has s0, s1, action, reward, done? and t
-        self.experience = np.zeros((input_dim * 2 + 4, total_memory))
+        stored = (('s0', input_dim), ('s1', input_dim), ('r', 1), ('action', 1), ('done', 1), ('t', 1))
+        self.replay_buffer = ReplayBuffer(total_memory, stored)
+        
         self.exp_ct = 0
         self.exp_index = 0
         self.model = Sequential()
@@ -112,37 +115,23 @@ class DeepQLearner:
         self.target_model.compile(optimizer = rms, loss = 'mse')
 
     def learn(self, s0, s1, reward, action, done, t):
-        memory = np.vstack((
-                np.array(s0).reshape(len(s0), 1),
-                np.array(s1).reshape(len(s1), 1),
-                reward,
-                action,
-                done,
-                t
-                ))
-        self.experience[:, self.exp_index] = memory.flatten()
-        if self.exp_ct < self.total_memory: self.exp_ct += 1
-        self.exp_index += 1
-        self.exp_index %= self.total_memory
+        self.replay_buffer.add_replay(s0=s0, s1=s1, r=reward, action=action, done=done, t=t)
 
-        if self.exp_index % self.target_freeze_duration == 0:
+        if self.replay_buffer.index % self.target_freeze_duration == 0:
             print("Copied to target network")
             self.target_model.set_weights(self.model.get_weights())
 
-        if self.exp_ct > DeepQLearner.MINIMUM_EXPERIENCE: 
+        if self.replay_buffer.count > DeepQLearner.MINIMUM_EXPERIENCE: 
             self.experience_replay()
 
     def experience_replay(self):
-        subset_index = np.random.choice(self.exp_ct, self.batch_size, replace = False)
-
-        # this hideous mess encodes an experience
-        subset = self.experience[:, subset_index]
-        s0 = subset[:self.input_dim, :]
-        s1 = subset[self.input_dim:self.input_dim*2, :]
-        r = subset[self.input_dim*2, :]
-        action = subset[self.input_dim*2+1, :]
-        done = subset[self.input_dim*2+2, :]
-        t = subset[self.input_dim*2+3, :]
+        replays = self.replay_buffer.sample(self.batch_size)
+        s0 = replays.get('s0')
+        s1 = replays.get('s0')
+        r = replays.get('r')
+        action = replays.get('action')
+        done = replays.get('done')
+        t = replays.get('t')
 
         s0_q_values = self.model.predict(s0.T) 
         s1_q_values = self.future_fn(s1)
