@@ -9,11 +9,8 @@ from keras.models import Sequential
 from keras.layers import Dense
 
 from replay_buffer import ReplayBuffer
-from exploration import EpsilonGreedy, CountBasedOptimism
+from exploration import EpsilonGreedy, CountBasedOptimism, VDBE
 
-env = gym.make('CartPole-v0')
-env = gym.make('MountainCar-v0')
-env = wrappers.Monitor(env, "/tmp/cartpole1", force = True)
 EPSILON = 1 * 10 ** -6
 
 class TabularLearner:
@@ -39,8 +36,8 @@ class TabularLearner:
         action = self.exploration_fn.explore(observation)
         if type(action) is tuple: # split (action, bonus)
             action, bonus = action 
+            self.exploration_bonus = bonus
         self.exploration_fn.modify_eps()
-        self.exploration_bonus = bonus
         return action
 
     def Q(self, s): 
@@ -98,6 +95,7 @@ class DeepQLearner(TabularLearner):
         self.actions = layers[-1]
 
         self.exploration_fn = exploration_fn(self)
+        self.exploration_bonus = 0
         self.discount = discount
         self.target_freeze_duration = target_freeze_duration
 
@@ -148,14 +146,23 @@ class DeepQLearner(TabularLearner):
 
         s0_q_values = self.model.predict(s0.T) 
         s1_q_values = self.future_fn(s1)
+        
+        td_error = []
 
         # update Q values
         for k, q in enumerate(s0_q_values):
             a = int(action[k])
             if bool(done[k]):
-                q[a] = self.terminal_fn(r[k], t[k])
+                q_1 = self.terminal_fn(r[k], t[k])
             else:
-                q[a] = r[k] + self.discount * s1_q_values[k]
+                q_1 = r[k] + self.discount * s1_q_values[k]
+            td_error.append(q_1 - q[a])
+            q[a] = q_1
+
+        td_error = np.array(td_error)
+
+        if type(self.exploration_fn) == VDBE:
+            self.exploration_fn.modify_eps(s0, td_error)
         
         loss = self.model.train_on_batch(s0.T, s0_q_values)
 
@@ -174,48 +181,71 @@ class DoubleDeepQLearner(DeepQLearner):
         # it takes the element of each row according to actions
         return np.diagonal(np.take(q_values, actions, axis = 1))
 
-# there's a bug with the unmonitored envs not checking max_steps
-max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
 
 learner = None
 
+cartpole = {    "name": 'CartPole-v0',
+                "buckets": (10, 10, 10, 10), # Discretization buckets
+                "limits": (4.8, 10, 0.42, 5)
+            }
+
+mountaincar = {    "name": 'MountainCar-v0',
+                "buckets": (15, 15, 10, 10), # Discretization buckets
+                "limits": (4.8, 10, 0.42, 5)
+            }
+
+env, BUCKETS, LIMITS = None, None, None
+def make_env(params):
+    global env
+    global BUCKETS
+    global LIMITS
+    env = gym.make(params['name'])
+    env = wrappers.Monitor(env, "/tmp/" + params['name'], force = True)
+    BUCKETS, LIMITS = params['buckets'], params['limits']
+
 def main():
     global learner
-    BUCKETS = (15, 15, 10, 10) # buckets to discretize
-    LIMITS = (4.8, 10, 0.42, 5) # limits to discretize
-    BUCKETS = (10, 10)
-    LIMITS = (1.2, 0.07)
+    make_env(cartpole)
+    # there's a bug with the unmonitored envs not checking max_steps
+    max_steps = env.spec.tags.get('wrapper_config.TimeLimit.max_episode_steps')
     TIMESTEP_MAX = max_steps
 
-    # no_drop is a reward function that penalises falling before 200. accelerates learning massively.
+    # no_drop is a reward function for cartpole that penalises falling before 200. accelerates learning massively.
     no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
+    identity = lambda r, x: r
+
+    # Epsilon Greedy Double Deep Q-Learner
     learner = DoubleDeepQLearner(len(env.observation_space.high), 
                                 (8, 16, 32, env.action_space.n),
                                 256, 
                                 100000, 
-                                no_drop(-10, 10),
-                                lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5))
+                                identity,
+                                lambda learner: EpsilonGreedy(learner, 1, 10 ** -5))
 
+    # hash function
     def discretizer(observation):
         b, l = BUCKETS, LIMITS
         # EPSILON used to keep within bucket bounds
         bounded = [min(l[i] - EPSILON,max(-l[i] + EPSILON, observation[i])) for i in range(len(observation))]
         return tuple(math.floor((bounded[i] + l[i]) / 2 / l[i] * b[i]) for i in range(len(bounded)))
 
-    learner = DoubleDeepQLearner(len(env.observation_space.high), 
-                                (8, 16, env.action_space.n),
-                                256, 
-                                100000, 
-                                lambda r, x: r,
-                                lambda learner: CountBasedOptimism(learner, 0.3, discretizer, 10))
+    # CountBasedOptimism Double Deep Q-Learner
+    learner = DoubleDeepQLearner(len(env.observation_space.high), (8, 16, env.action_space.n),
+                                 256, 
+                                 100000, 
+                                 lambda r, x: r,
+                                 lambda learner: CountBasedOptimism(learner, 0.3, -10 ** -5, discretizer, 10))
 
-    # learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10), 
-            # lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5))
-    # learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
-    #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
+    # VDBE Double Deep Q-Learner
+    learner = DoubleDeepQLearner(len(env.observation_space.high), 
+                                 (8, 16, env.action_space.n),
+                                 256, 
+                                 100000, 
+                                 lambda r, x: r,
+                                 lambda learner: VDBE(learner, 0.3, discretizer, 2, 1/env.action_space.n))
 
     total = 0
-    for i_episode in range(1000):
+    for i_episode in range(10000):
         s1 = env.reset()
         ep_reward = 0
         for t in range(max_steps):
@@ -228,6 +258,7 @@ def main():
         total += ep_reward
         print("Episode {0:8d}: {1:4d} timesteps, {2:4f} average".format(i_episode, t+1, total/(i_episode+1)))
     env.close()
+
     # uncomment this line with your api key if you want to upload to openai
     #gym.upload('/tmp/cartpole0', api_key='')
 main()
