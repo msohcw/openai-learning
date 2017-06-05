@@ -9,9 +9,10 @@ from keras.models import Sequential
 from keras.layers import Dense
 
 from replay_buffer import ReplayBuffer
-from exploration import EpsilonGreedy
+from exploration import EpsilonGreedy, CountBasedOptimism
 
 env = gym.make('CartPole-v0')
+env = gym.make('MountainCar-v0')
 env = wrappers.Monitor(env, "/tmp/cartpole1", force = True)
 EPSILON = 1 * 10 ** -6
 
@@ -32,10 +33,14 @@ class TabularLearner:
         self.alpha_min = alpha_min
 
         self.exploration_fn = exploration_fn(self)
+        self.exploration_bonus = 0
 
     def act(self, observation):
         action = self.exploration_fn.explore(observation)
+        if type(action) is tuple: # split (action, bonus)
+            action, bonus = action 
         self.exploration_fn.modify_eps()
+        self.exploration_bonus = bonus
         return action
 
     def Q(self, s): 
@@ -50,6 +55,8 @@ class TabularLearner:
             update = self.terminal_fn(reward, t)
         else: # update as per normal
             update = self.update_fn(prev, now, reward)
+        update += self.exploration_bonus
+        self.exploration_bonus = 0
         self.Q[self.discretized(s0) + (action,)] = update
         self.alpha = max(self.alpha_min, self.alpha + self.alpha_dt)
 
@@ -119,6 +126,8 @@ class DeepQLearner(TabularLearner):
         self.target_model.compile(optimizer = rms, loss = 'mse')
 
     def learn(self, s0, s1, reward, action, done, t):
+        reward += self.exploration_bonus
+        self.exploration_bonus = 0
         self.replay_buffer.add_replay(s0=s0, s1=s1, r=reward, action=action, done=done, t=t)
 
         if self.replay_buffer.index % self.target_freeze_duration == 0:
@@ -154,7 +163,7 @@ class DeepQLearner(TabularLearner):
         return np.amax(self.target_model.predict(s1.T), axis = 1)
 
     def Q(self, s):
-        return self.model.predict(s.reshape(1,4))
+        return self.model.predict(s.reshape(1,self.input_dim))
 
 class DoubleDeepQLearner(DeepQLearner):
     def future_fn(self, s1):
@@ -174,19 +183,34 @@ def main():
     global learner
     BUCKETS = (15, 15, 10, 10) # buckets to discretize
     LIMITS = (4.8, 10, 0.42, 5) # limits to discretize
+    BUCKETS = (10, 10)
+    LIMITS = (1.2, 0.07)
     TIMESTEP_MAX = max_steps
 
     # no_drop is a reward function that penalises falling before 200. accelerates learning massively.
     no_drop = lambda fail, success: lambda r, t: fail if t != TIMESTEP_MAX else success
-    """
     learner = DoubleDeepQLearner(len(env.observation_space.high), 
                                 (8, 16, 32, env.action_space.n),
                                 256, 
                                 100000, 
                                 no_drop(-10, 10),
-                                lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5)) """
-    learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10), 
-            lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5))
+                                lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5))
+
+    def discretizer(observation):
+        b, l = BUCKETS, LIMITS
+        # EPSILON used to keep within bucket bounds
+        bounded = [min(l[i] - EPSILON,max(-l[i] + EPSILON, observation[i])) for i in range(len(observation))]
+        return tuple(math.floor((bounded[i] + l[i]) / 2 / l[i] * b[i]) for i in range(len(bounded)))
+
+    learner = DoubleDeepQLearner(len(env.observation_space.high), 
+                                (8, 16, env.action_space.n),
+                                256, 
+                                100000, 
+                                lambda r, x: r,
+                                lambda learner: CountBasedOptimism(learner, 0.3, discretizer, 10))
+
+    # learner = DeepQLearner(len(env.observation_space.high), (8, 16, 32, env.action_space.n), 256, 100000, no_drop(-10, 10), 
+            # lambda learner: EpsilonGreedy(learner, 0.1, 10 ** -5))
     # learner = TabularQLearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200, 10))
     #learner = TabularSARSALearner(env.action_space.n, BUCKETS, LIMITS, no_drop(-200,10))
 
